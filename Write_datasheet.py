@@ -16,3 +16,4 @@ ser.close()
 df = pd.DataFrame(data, columns=["time_ms", "RED", "DC", "AC", "PI", "HR"])
 df.to_excel("data_collector.xlsx", index=False)
 print("Đã lưu data_collector.xlsx thành công!")
+# Lưu dữ liệu vào file Excel
