@@ -9,11 +9,13 @@ while len(data) < max_samples:
     line = ser.readline().decode('utf-8').strip()
     if line:
         parts = line.split(",")
-        if len(parts) == 14:
+        if len(parts) == 6:
             data.append(parts)
 
 ser.close()
-df = pd.DataFrame(data, columns=["time_ms", "RED", "DC", "AC", "PI", "HR", "P1", "P2", "Amp", "Dt_up", "DT12", "W50", "RI", "AI", "SI"])
+df = pd.DataFrame(data, columns=["time_ms", "RED", "DC", "AC", "PI", "HR" ])
 df.to_excel("data_collector.xlsx", index=False)
 print("Đã lưu data_collector.xlsx thành công!")
 # Lưu dữ liệu vào file Excel
+
+
