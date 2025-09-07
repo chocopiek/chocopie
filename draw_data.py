@@ -7,10 +7,10 @@ def main():
     df = pd.read_excel(file_path)
 
     # Chỉ lấy đúng 8 trường của bài test
-    columns_to_plot = ["RED", "DC", "AC", "PI", "HR"]
+    columns_to_plot = ["RED", "DC", "AC", "PI", "HR", "P1", "P2", "Amp", "DT_up", "DT12", "W50", "RI", "AI", "SI"]
     times = df['time_ms']
 
-    fig, axes = plt.subplots(len(columns_to_plot), 1, figsize=(6, 3 * len(columns_to_plot)))
+    fig, axes = plt.subplots(len(columns_to_plot), 1, figsize=(14, 2 * len(columns_to_plot)))
 
     if len(columns_to_plot) == 1:
         axes = [axes]
