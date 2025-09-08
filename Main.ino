@@ -4,7 +4,7 @@
 
 MAX30105 particleSensor;
 
-#define WINDOW_SIZE 100
+#define WINDOW_SIZE 300
 uint32_t redBuffer[WINDOW_SIZE];
 int bufferIndex = 0;
 bool bufferFilled = false;
@@ -75,7 +75,7 @@ void loop() {
   // Tìm P2 trong 300ms sau P1
   static bool waitingP2 = false;
   float RI = 0, AI = 0, DT12 = 0, DT_up = 0, SI = 0, W50 = 0;
-
+  
   if (!rising && (now - tP1 < 300)) {
     if (AC > P2) {
       P2 = AC;
