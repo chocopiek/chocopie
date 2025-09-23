@@ -4,32 +4,26 @@
 
 MAX30105 particleSensor;
 
-#define WINDOW_SIZE 300
-uint32_t redBuffer[WINDOW_SIZE];
-int bufferIndex = 0;
-bool bufferFilled = false;
+// Sampling settings
+const float dt = 0.02f; // 20 ms sampling => 50 Hz
 
-// Biến phân tích sóng
-float P1 = 0, P2 = 0, Amp = 0;
-unsigned long tP1 = 0, tP2 = 0, tFoot = 0;
+// HPF params (first-order high-pass, causal)
+// fc_hp = 0.5 Hz (cắt drift / hô hấp)
+const float fc_hp = 0.5f;
+float alpha_hp;
 
-// Nhịp tim
-unsigned long lastBeatTime = 0;
-float HR = 0;
+// LPF params (first-order low-pass)
+// fc_lp = 8.0 Hz (lọc nhiễu cao tần)
+const float fc_lp = 8.0f;
+float alpha_lp;
 
-//--------------------- Tính DC ---------------------
-float computeDC(uint32_t newSample) {
-  redBuffer[bufferIndex] = newSample;
-  bufferIndex = (bufferIndex + 1) % WINDOW_SIZE;
-  if (bufferIndex == 0) bufferFilled = true;
+// HPF state
+float x_prev_hp = 0.0f;
+float y_prev_hp = 0.0f;
 
-  long sum = 0;
-  int count = bufferFilled ? WINDOW_SIZE : bufferIndex;
-  for (int i = 0; i < count; i++) sum += redBuffer[i];
-  return (float)sum / count;
-}
+// LPF state
+float y_prev_lp = 0.0f;
 
-//--------------------- SETUP ---------------------
 void setup() {
   Serial.begin(115200);
   if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD)) {
@@ -37,85 +31,44 @@ void setup() {
     while (1);
   }
   particleSensor.setup();
-  Serial.println("time_ms,RED,DC,AC,PI,HR,P1,P2,Amp,DT_up,DT12,W50,RI,AI,SI"); // header
+
+  // Tính hệ số alpha cho IIR RC (first-order)
+  // LPF: y[n] = y[n-1] + alpha_lp * (x[n] - y[n-1])  với alpha_lp = dt/(RC + dt), RC = 1/(2*pi*fc)
+  float RC_lp = 1.0f / (2.0f * 3.14159265f * fc_lp);
+  alpha_lp = dt / (RC_lp + dt);
+
+  // HPF (implement bằng differencing + LPF form):
+  // High-pass via y = alpha_hp*(y_prev + x - x_prev)
+  // alpha_hp = RC / (RC + dt)  với RC = 1/(2*pi*fc_hp)
+  float RC_hp = 1.0f / (2.0f * 3.14159265f * fc_hp);
+  alpha_hp = RC_hp / (RC_hp + dt);
+
+
 }
 
-//--------------------- LOOP ---------------------
 void loop() {
   unsigned long now = millis();
-  long redValue = particleSensor.getRed();
+  uint32_t raw = particleSensor.getRed();
 
-  // DC và AC
-  float DC = computeDC(redValue);
-  float AC = redValue - DC;
-  float Pi = (DC != 0) ? fabs(AC) / DC : 0;
+  // --- High-pass (causal) ---
+  float x = (float)raw;
+  float y_hp = alpha_hp * (y_prev_hp + x - x_prev_hp);
+  x_prev_hp = x;
+  y_prev_hp = y_hp;
 
-  // Phát hiện P1 (đỉnh chính)
-  static float prevAC = 0;
-  static bool rising = false;
+  // --- Low-pass (causal) ---
+  float y_lp = y_prev_lp + alpha_lp * (y_hp - y_prev_lp);
+  y_prev_lp = y_lp;
 
-  if (AC > prevAC && !rising) { // bắt đầu lên
-    rising = true;
-    tFoot = now;
-  }
+  // --- Shift to positive if needed (so AC > 0)
+  static float min_seen = 1e9f;
+  if (y_lp < min_seen) min_seen = y_lp;
+  float AC_pos = y_lp - min_seen + 1.0f; // +1 to avoid zero
 
-  if (AC < prevAC && rising) { // phát hiện P1
-    rising = false;
-    P1 = prevAC;
-    tP1 = now;
-    Amp = P1;
+  // Output CSV
+  if(AC_pos != 1){
+  Serial.print(now); Serial.print(",");
+  Serial.println(AC_pos);}
 
-    if (lastBeatTime > 0) {
-      float dt = (now - lastBeatTime) / 1000.0;
-      HR = 60.0 / dt;
-    }
-    lastBeatTime = now;
-  }
-
-  // Tìm P2 trong 300ms sau P1
-  static bool waitingP2 = false;
-  float RI = 0, AI = 0, DT12 = 0, DT_up = 0, SI = 0, W50 = 0;
-  
-  if (!rising && (now - tP1 < 300)) {
-    if (AC > P2) {
-      P2 = AC;
-      tP2 = now;
-    }
-    waitingP2 = true;
-  } else if (waitingP2) {
-    waitingP2 = false;
-
-    RI = (P1 != 0) ? P2 / P1 : 0;
-    AI = RI;
-    DT12 = (tP2 - tP1) / 1000.0;
-    DT_up = (tP1 - tFoot) / 1000.0;
-    float height = 170; // cm
-    SI = (DT12 > 0) ? height / DT12 : 0;
-
-    if (Amp > 0) {
-      W50 = (tP1 - tFoot) * 0.5 / 1000.0; // gần đúng
-    }
-
-    // Xuất ra 1 dòng dữ liệu CSV đúng chuẩn
-    Serial.print(now); Serial.print(",");
-    Serial.print(redValue); Serial.print(",");
-    Serial.print(DC, 2); Serial.print(",");
-    Serial.print(AC, 2); Serial.print(",");
-    Serial.print(Pi, 4); Serial.print(",");
-    Serial.print(HR, 2); Serial.print(",");
-    Serial.print(P1, 2); Serial.print(",");
-    Serial.print(P2, 2); Serial.print(",");
-    Serial.print(Amp, 2); Serial.print(",");
-    Serial.print(DT_up, 3); Serial.print(",");
-    Serial.print(DT12, 3); Serial.print(",");
-    Serial.print(W50, 3); Serial.print(",");
-    Serial.print(RI, 4); Serial.print(",");
-    Serial.print(AI, 4); Serial.print(",");
-    Serial.println(SI, 2);
-
-    // reset P2
-    P2 = 0;
-  }
-
-  prevAC = AC;
+  delay(20); // maintain sampling
 }

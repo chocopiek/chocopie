@@ -1,28 +1,17 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def main():
-    # Đọc file Excel
-    file_path = "data_collector.xlsx"
-    df = pd.read_excel(file_path)
+file_path = "data_sheet.xlsx"
+df = pd.read_excel(file_path)
 
-    # Chỉ lấy đúng 8 trường của bài test
-    columns_to_plot = ["RED", "DC", "AC", "PI", "HR", "P1", "P2", "Amp", "DT_up", "DT12", "W50", "RI", "AI", "SI"]
-    times = df['time_ms']
+times = df['time_ms']
+ac_values = df['AC']
 
-    fig, axes = plt.subplots(len(columns_to_plot), 1, figsize=(14, 2 * len(columns_to_plot)))
-
-    if len(columns_to_plot) == 1:
-        axes = [axes]
-
-    for i, column in enumerate(columns_to_plot):
-        axes[i].plot(times, df[column])
-        axes[i].set_title(f'{column} Plot')
-        axes[i].set_xlabel('Time (ms)')
-        axes[i].set_ylabel(column)
-
-    plt.tight_layout()
-    plt.show()
-
-if __name__ == "__main__":
-    main()
+plt.figure(figsize=(12,6)) 
+plt.plot(times, ac_values, linewidth=1, color="blue") 
+plt.title("Tín hiệu AC theo thời gian") 
+plt.xlabel("Time (ms)") 
+plt.ylabel("AC Value") 
+plt.grid(True) 
+plt.tight_layout() 
+plt.show()
