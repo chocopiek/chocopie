@@ -1,74 +1,67 @@
 #include <Wire.h>
 #include "MAX30105.h"
-#include "heartRate.h"
 
 MAX30105 particleSensor;
 
-// Sampling settings
-const float dt = 0.02f; // 20 ms sampling => 50 Hz
+//// --------- Cấu hình ---------
+#define FS      50.0   // Tần số lấy mẫu (Hz)
+#define FC_LOW  8.0    // Low-pass cutoff
+#define FC_HIGH 0.5    // High-pass cutoff
 
-// HPF params (first-order high-pass, causal)
-// fc_hp = 0.5 Hz (cắt drift / hô hấp)
-const float fc_hp = 0.5f;
-float alpha_hp;
+//// --------- Biến filter Butterworth bậc 2 (band-pass) ---------
+// Hệ số filter được tính trước bằng Python/Matlab
+// band-pass 0.5–8 Hz @ 50Hz, butterworth bậc 2
+// Dùng dạng IIR: y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
+float b[] = {0.0675, 0.0, -0.0675}; 
+float a[] = {1.0, -1.7991, 0.8643};
 
-// LPF params (first-order low-pass)
-// fc_lp = 8.0 Hz (lọc nhiễu cao tần)
-const float fc_lp = 8.0f;
-float alpha_lp;
+float x_buff[3] = {0,0,0}; 
+float y_buff[3] = {0,0,0};
 
-// HPF state
-float x_prev_hp = 0.0f;
-float y_prev_hp = 0.0f;
+unsigned long now;
 
-// LPF state
-float y_prev_lp = 0.0f;
+//// --------- Hàm band-pass filter ---------
+float bandpass_filter(float x) {
+  // Dịch buffer
+  x_buff[2] = x_buff[1];
+  x_buff[1] = x_buff[0];
+  x_buff[0] = x;
+
+  y_buff[2] = y_buff[1];
+  y_buff[1] = y_buff[0];
+
+  // IIR filter
+  y_buff[0] = b[0]*x_buff[0] + b[1]*x_buff[1] + b[2]*x_buff[2]
+              - a[1]*y_buff[1] - a[2]*y_buff[2];
+
+  return y_buff[0];
+}
 
 void setup() {
   Serial.begin(115200);
   if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD)) {
-    Serial.println("Không tìm thấy MAX30102!");
+    Serial.println("Không tìm thấy MAX30105");
     while (1);
   }
-  particleSensor.setup();
-
-  // Tính hệ số alpha cho IIR RC (first-order)
-  // LPF: y[n] = y[n-1] + alpha_lp * (x[n] - y[n-1])  với alpha_lp = dt/(RC + dt), RC = 1/(2*pi*fc)
-  float RC_lp = 1.0f / (2.0f * 3.14159265f * fc_lp);
-  alpha_lp = dt / (RC_lp + dt);
-
-  // HPF (implement bằng differencing + LPF form):
-  // High-pass via y = alpha_hp*(y_prev + x - x_prev)
-  // alpha_hp = RC / (RC + dt)  với RC = 1/(2*pi*fc_hp)
-  float RC_hp = 1.0f / (2.0f * 3.14159265f * fc_hp);
-  alpha_hp = RC_hp / (RC_hp + dt);
-
-
+  particleSensor.setup(); // cấu hình mặc định (LED power, sample rate…)
 }
 
 void loop() {
-  unsigned long now = millis();
-  uint32_t raw = particleSensor.getRed();
+  now = millis();
 
-  // --- High-pass (causal) ---
-  float x = (float)raw;
-  float y_hp = alpha_hp * (y_prev_hp + x - x_prev_hp);
-  x_prev_hp = x;
-  y_prev_hp = y_hp;
+  // Lấy giá trị raw RED từ cảm biến
+  long raw = particleSensor.getRed();
 
-  // --- Low-pass (causal) ---
-  float y_lp = y_prev_lp + alpha_lp * (y_hp - y_prev_lp);
-  y_prev_lp = y_lp;
+  // Đưa qua band-pass filter
+  float AC = bandpass_filter((float)raw);
 
-  // --- Shift to positive if needed (so AC > 0)
-  static float min_seen = 1e9f;
-  if (y_lp < min_seen) min_seen = y_lp;
-  float AC_pos = y_lp - min_seen + 1.0f; // +1 to avoid zero
+  // Scale lại để dễ nhìn
+  float AC_scaled = AC * 10.0f;
 
-  // Output CSV
-  if(AC_pos != 1){
+  // Xuất ra serial (time, raw, filtered)
   Serial.print(now); Serial.print(",");
-  Serial.println(AC_pos);}
+  //Serial.print(raw); Serial.print(",");
+  Serial.println(AC_scaled);
 
-  delay(20); // maintain sampling
+  delay(20); // ~50 Hz
 }
