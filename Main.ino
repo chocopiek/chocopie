@@ -72,7 +72,6 @@ unsigned long find_wavefoot(unsigned long t_P1) {
   return t_buffer[min_index];
 }
 
-
 //// --------- Hàm tìm P1, P2 ---------
 bool find_peaks(float value, unsigned long t, float &P1, float &P2,
                 bool &foundP1, bool &foundP2, unsigned long &t_P1, unsigned long &t_P2,
@@ -128,13 +127,13 @@ bool find_peaks(float value, unsigned long t, float &P1, float &P2,
 void setup() {
   Serial.begin(115200);
   if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD)) {
-    Serial.println("Không tìm thấy MAX30105");
+    Serial.println("Không tìm thấy MAX30102");
     while (1);
   }
   particleSensor.setup();
 
-  // In tiêu đề cột
-  Serial.println("time,raw,AC,DC,Pi,ΔT12,SI,RI,AI,HR,ΔT_up");
+  // In tiêu đề cột TinyML
+  Serial.println("AC,DC,P1,P2,ΔT12,SI,RI,AI,HR,ΔT_up,Glucose");
 }
 
 //// --------- Loop ---------
@@ -162,8 +161,6 @@ void loop() {
   float SI = 0, RI = 0, AI = 0, Pi = 0;
 
   if (find_peaks(AC_scaled, now, P1, P2, foundP1, foundP2, t_P1, t_P2, HR)) { 
-    Pi = ((P1 - P2) / DC) * 100.0f;
-
     if (foundP1) {
       unsigned long t_foot = find_wavefoot(t_P1);
       deltaT_up = (t_P1 - t_foot) / 1000.0f;
@@ -176,17 +173,21 @@ void loop() {
       AI = (P1 - P2) / P1;
     }
 
-    Serial.print(now); Serial.print(",");
-    Serial.print(raw); Serial.print(",");
+    // Glucose = 0 placeholder
+    float Glucose = 0.0;
+
+    // In ra CSV phù hợp TinyML
     Serial.print(AC_scaled); Serial.print(",");
     Serial.print(DC); Serial.print(",");
-    Serial.print(Pi); Serial.print(",");
+    Serial.print(P1); Serial.print(",");
+    Serial.print(P2); Serial.print(",");
     Serial.print(deltaT12); Serial.print(",");
     Serial.print(SI); Serial.print(",");
     Serial.print(RI); Serial.print(",");
     Serial.print(AI); Serial.print(",");
     Serial.print(HR); Serial.print(",");
-    Serial.println(deltaT_up);
+    Serial.print(deltaT_up); Serial.print(",");
+    Serial.println(Glucose);
   }
 
   delay(20); // ~50Hz
