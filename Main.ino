@@ -16,10 +16,17 @@ float a[] = {1.0, -1.7991, 0.8643};
 float x_buff[3] = {0,0,0};
 float y_buff[3] = {0,0,0};
 
+//// --------- Low-pass Butterworth 0.5 Hz @ 50 Hz (lấy DC) ---------
+float b_dc[] = {0.00362168, 0.00724336, 0.00362168};
+float a_dc[] = {1.0, -1.8226949, 0.83718165};
+float x_dc[3] = {0, 0, 0};
+float y_dc[3] = {0, 0, 0};
+
+
 unsigned long now;
 int warmup = 0; // đếm số mẫu warmup
 
-//// --------- Hàm band-pass filter ---------
+//// --------- Hàm band-pass filter(lấy AC) ---------
 float bandpass_filter(float x) {
   x_buff[2] = x_buff[1];
   x_buff[1] = x_buff[0];
@@ -33,6 +40,19 @@ float bandpass_filter(float x) {
 
   return y_buff[0];
 }
+
+//// --------- Hàm low-pass filter (lấy DC) ---------
+float lowpass_dc(float x) {
+  x_dc[2] = x_dc[1];
+  x_dc[1] = x_dc[0];
+  x_dc[0] = x;
+  y_dc[2] = y_dc[1];
+  y_dc[1] = y_dc[0];
+  y_dc[0] = b_dc[0]*x_dc[0] + b_dc[1]*x_dc[1] + b_dc[2]*x_dc[2]
+            - a_dc[1]*y_dc[1] - a_dc[2]*y_dc[2];
+  return y_dc[0];
+}
+
 
 //// --------- Hàm tìm P1 và P2 ---------
 bool find_peaks(float value, unsigned long t, float &P1, float &P2,
@@ -110,7 +130,7 @@ void loop() {
   long raw = particleSensor.getRed();
   float AC = bandpass_filter((float)raw);
   float AC_scaled = AC * 10.0f;
-
+  float DC = lowpass_dc((float)raw); 
   // Bỏ qua 3s đầu
   if (warmup < WARMUP_SAMPLES) {
     warmup++;
@@ -120,24 +140,16 @@ void loop() {
   // In tín hiệu thô để debug
   Serial.print(now);
   Serial.print(",");
-  Serial.println(AC_scaled);
+  Serial.print(AC_scaled);
+  Serial.print(",");
 
   // Tìm P1, P2
   float P1 = 0, P2 = 0;
   bool foundP1 = false, foundP2 = false;
 
-  if (find_peaks(AC_scaled, now, P1, P2, foundP1, foundP2)) {
-    if (foundP1) {
-        Serial.print(now);Serial.print(",");
-        
-        Serial.print(AC_scaled);Serial.print(",");
-        Serial.println(P1);
-    }
-    if (foundP2) {
-        Serial.print(now);Serial.print(",");
-        Serial.print(AC_scaled);Serial.print(",");
-        Serial.println(P2);
-    }
+  if (find_peaks(AC_scaled, now, P1, P2, foundP1, foundP2)) { 
+    float Pi = ((P1 - P2) / DC) * 100.0f;
+    Serial.println(Pi);
   }
 
   delay(20); // ~50Hz
