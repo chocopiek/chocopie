@@ -7,92 +7,63 @@ MAX30105 particleSensor;
 #define FS      50.0   // Tần số lấy mẫu (Hz)
 #define THRESHOLD 30.0 // Ngưỡng tránh nhiễu
 #define WARMUP_SAMPLES 150 // Bỏ qua ~3s đầu (50Hz * 3s)
-#define BUFFER_SIZE 200     // ~4s dữ liệu để tìm chân sóng
 
 //// --------- Biến filter Butterworth bậc 2 (band-pass) ---------
+// band-pass 0.5–8 Hz @ 50Hz, butterworth bậc 2
 float b[] = {0.0675, 0.0, -0.0675};
 float a[] = {1.0, -1.7991, 0.8643};
 
 float x_buff[3] = {0,0,0};
 float y_buff[3] = {0,0,0};
 
-//// --------- Low-pass Butterworth 0.5 Hz @ 50 Hz (lấy DC) ---------
-float b_dc[] = {0.00362168, 0.00724336, 0.00362168};
-float a_dc[] = {1.0, -1.8226949, 0.83718165};
-float x_dc[3] = {0, 0, 0};
-float y_dc[3] = {0, 0, 0};
-
-//// --------- Buffer lưu giá trị AC và thời gian ---------
-float ac_buffer[BUFFER_SIZE];
-unsigned long t_buffer[BUFFER_SIZE];
-int buf_index = 0;
-
 unsigned long now;
 int warmup = 0;
 
-//// --------- Bộ lọc ---------
+//// --------- Bộ nhớ cho chỉ số ---------
+float lastP1 = 0, lastP2 = 0;
+unsigned long tP1 = 0, tP2 = 0, tLastP1 = 0, tFoot = 0;
+float RR = 1000;  // ms
+float HR = 0, RI = 0, SI = 0, AI = 0, deltaT12 = 0, deltaT_up = 0;
+float DC = 0;     // giá trị trung bình DC giả định
+float Glucose = 0; // giả lập (có thể thêm từ dữ liệu sau)
+
+//// --------- Biến phát hiện chân sóng ---------
+float prevVal = 0, prevDiff = 0;
+
+//// --------- Bộ lọc band-pass ---------
 float bandpass_filter(float x) {
   x_buff[2] = x_buff[1];
   x_buff[1] = x_buff[0];
   x_buff[0] = x;
+
   y_buff[2] = y_buff[1];
   y_buff[1] = y_buff[0];
+
   y_buff[0] = b[0]*x_buff[0] + b[1]*x_buff[1] + b[2]*x_buff[2]
               - a[1]*y_buff[1] - a[2]*y_buff[2];
+
   return y_buff[0];
 }
 
-float lowpass_dc(float x) {
-  x_dc[2] = x_dc[1];
-  x_dc[1] = x_dc[0];
-  x_dc[0] = x;
-  y_dc[2] = y_dc[1];
-  y_dc[1] = y_dc[0];
-  y_dc[0] = b_dc[0]*x_dc[0] + b_dc[1]*x_dc[1] + b_dc[2]*x_dc[2]
-            - a_dc[1]*y_dc[1] - a_dc[2]*y_dc[2];
-  return y_dc[0];
-}
-
-unsigned long find_wavefoot(unsigned long t_P1) {
-  int end = buf_index - 1;
-  if (end < 0) end = BUFFER_SIZE - 1;
-
-  int start = (end - 50 + BUFFER_SIZE) % BUFFER_SIZE; // khoảng ~1s trước P1
-
-  float min_value = 1e9;
-  int min_index = end;
-
-  for (int i = start; i != end; i = (i + 1) % BUFFER_SIZE) {
-    if (ac_buffer[i] < min_value) {
-      min_value = ac_buffer[i];
-      min_index = i;
-    }
-  }
-
-  return t_buffer[min_index];
-}
-
-//// --------- Hàm tìm P1, P2 ---------
+//// --------- Tìm P1 và P2 ---------
 bool find_peaks(float value, unsigned long t, float &P1, float &P2,
-                bool &foundP1, bool &foundP2, unsigned long &t_P1, unsigned long &t_P2,
-                float &HR) {
+                bool &foundP1, bool &foundP2) {
   static float cur_peak = 0.0f;
   static unsigned long lastP1Time = 0;
-  static float RR = 1000;
+  static float RR_local = 1000; // ms
   static bool lookingForP1 = true;
   static bool lookingForP2 = false;
 
+  // --- Tìm P1 ---
   if (lookingForP1) {
     if (value > cur_peak) {
       cur_peak = value;
     } else if (cur_peak > THRESHOLD && value < cur_peak * 0.7f) {
       P1 = cur_peak;
       foundP1 = true;
-      t_P1 = t;
 
       if (lastP1Time > 0) {
-        RR = (t - lastP1Time) * 0.9f + RR * 0.1f;
-        HR = 60000.0f / RR;
+        RR_local = (t - lastP1Time) * 0.9f + RR_local * 0.1f;
       }
       lastP1Time = t;
 
@@ -102,16 +73,17 @@ bool find_peaks(float value, unsigned long t, float &P1, float &P2,
       return true;
     }
   }
+
+  // --- Tìm P2 ---
   else if (lookingForP2) {
     unsigned long dt = t - lastP1Time;
-    if (dt >= (unsigned long)(0.1f * RR) && dt <= (unsigned long)(0.4f * RR)) {
+
+    if (dt >= (unsigned long)(0.1f * RR_local) && dt <= (unsigned long)(0.4f * RR_local)) {
       if (value > cur_peak) cur_peak = value;
-    }
-    else if (dt > (unsigned long)(0.4f * RR)) {
-      if (cur_peak > THRESHOLD) {  
+    } else if (dt > (unsigned long)(0.4f * RR_local)) {
+      if (cur_peak > THRESHOLD) {
         P2 = cur_peak;
         foundP2 = true;
-        t_P2 = t;
       }
       cur_peak = 0.0f;
       lookingForP2 = false;
@@ -127,13 +99,11 @@ bool find_peaks(float value, unsigned long t, float &P1, float &P2,
 void setup() {
   Serial.begin(115200);
   if (!particleSensor.begin(Wire, I2C_SPEED_STANDARD)) {
-    Serial.println("Không tìm thấy MAX30102");
+    Serial.println("Không tìm thấy MAX30105");
     while (1);
   }
   particleSensor.setup();
-
-  // In tiêu đề cột TinyML
-  Serial.println("AC,DC,P1,P2,ΔT12,SI,RI,AI,HR,ΔT_up,Glucose");
+  Serial.println("AC_scaled,DC,P1,P2,deltaT12,SI,RI,AI,HR,deltaT_up,Glucose");
 }
 
 //// --------- Loop ---------
@@ -142,52 +112,69 @@ void loop() {
   long raw = particleSensor.getRed();
   float AC = bandpass_filter((float)raw);
   float AC_scaled = AC * 10.0f;
-  float DC = lowpass_dc((float)raw);
-
-  // Lưu vào buffer
-  ac_buffer[buf_index] = AC_scaled;
-  t_buffer[buf_index] = now;
-  buf_index = (buf_index + 1) % BUFFER_SIZE;
 
   if (warmup < WARMUP_SAMPLES) {
     warmup++;
     return;
   }
 
+  // --- Lọc DC (bình quân động) ---
+  static float alpha = 0.01;
+  DC = DC * (1 - alpha) + raw * alpha;
+
+  // --- Phát hiện chân sóng (foot) ---
+  float diff = AC_scaled - prevVal;
+  if (prevDiff < 0 && diff > 0 && fabs(prevDiff) > 2.0) {
+    tFoot = now;
+  }
+  prevDiff = diff;
+  prevVal = AC_scaled;
+
+  // --- Tìm P1, P2 ---
   float P1 = 0, P2 = 0;
   bool foundP1 = false, foundP2 = false;
-  unsigned long t_P1 = 0, t_P2 = 0;
-  float HR = 0.0f, deltaT12 = 0, deltaT_up = 0;
-  float SI = 0, RI = 0, AI = 0, Pi = 0;
 
-  if (find_peaks(AC_scaled, now, P1, P2, foundP1, foundP2, t_P1, t_P2, HR)) { 
+  if (find_peaks(AC_scaled, now, P1, P2, foundP1, foundP2)) {
+
+    // Nếu tìm được P1
     if (foundP1) {
-      unsigned long t_foot = find_wavefoot(t_P1);
-      deltaT_up = (t_P1 - t_foot) / 1000.0f;
+      lastP1 = P1;
+      tP1 = now;
+
+      if (tLastP1 > 0) {
+        RR = (tP1 - tLastP1);
+        HR = 60000.0 / RR; // bpm
+      }
+      tLastP1 = tP1;
     }
 
-    if (foundP1 && foundP2) {
-      deltaT12 = (t_P2 - t_P1) / 1000.0f;
-      if (deltaT12 > 0) SI = 180.0f / deltaT12;
-      RI = P2 / P1;
-      AI = (P1 - P2) / P1;
+    // Nếu tìm được P2
+    if (foundP2) {
+      lastP2 = P2;
+      tP2 = now;
+
+      // --- Tính các chỉ số ---
+      deltaT12 = (float)(tP2 - tP1);
+      deltaT_up = (tP1 > tFoot) ? (float)(tP1 - tFoot) : 0;
+
+      SI = lastP1 / deltaT12;       // Stiffness Index
+      RI = lastP2 / lastP1;         // Reflection Index
+      AI = RI * 100.0;              // Augmentation Index %
+      Glucose = 0;                  // chưa có dữ liệu thực tế
+
+      // --- In ra CSV (để train TinyML) ---
+      Serial.print(AC_scaled); Serial.print(",");
+      Serial.print(DC); Serial.print(",");
+      Serial.print(lastP1); Serial.print(",");
+      Serial.print(lastP2); Serial.print(",");
+      Serial.print(deltaT12); Serial.print(",");
+      Serial.print(SI); Serial.print(",");
+      Serial.print(RI); Serial.print(",");
+      Serial.print(AI); Serial.print(",");
+      Serial.print(HR); Serial.print(",");
+      Serial.print(deltaT_up); Serial.print(",");
+      Serial.println(Glucose);
     }
-
-    // Glucose = 0 placeholder
-    float Glucose = 0.0;
-
-    // In ra CSV phù hợp TinyML
-    Serial.print(AC_scaled); Serial.print(",");
-    Serial.print(DC); Serial.print(",");
-    Serial.print(P1); Serial.print(",");
-    Serial.print(P2); Serial.print(",");
-    Serial.print(deltaT12); Serial.print(",");
-    Serial.print(SI); Serial.print(",");
-    Serial.print(RI); Serial.print(",");
-    Serial.print(AI); Serial.print(",");
-    Serial.print(HR); Serial.print(",");
-    Serial.print(deltaT_up); Serial.print(",");
-    Serial.println(Glucose);
   }
 
   delay(20); // ~50Hz
