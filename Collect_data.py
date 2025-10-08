@@ -1,42 +1,69 @@
 import serial
 import csv
 import time
+from datetime import datetime
 
-# ⚙️ Cấu hình
-PORT = "COM6"        # ⚠️ Đổi lại đúng cổng Arduino của bạn (ví dụ: COM5 hoặc /dev/ttyUSB0)
-BAUD = 115200        # Tốc độ truyền phải trùng với Serial.begin() trong Arduino
-FILENAME = "data.csv"
+# ⚙️ Cấu hình cổng và tốc độ
+PORT = "COM6"         # ⚠️ Đổi lại đúng cổng Arduino (ví dụ: COM5 hoặc /dev/ttyUSB0)
+BAUD = 115200         # Phải trùng với Serial.begin() trong Arduino
+FILENAME = "data.csv" # Tên file lưu dữ liệu
 
-# ⏱️ Mở kết nối serial
-ser = serial.Serial(PORT, BAUD)
-time.sleep(2)  # Chờ Arduino khởi động
+# ⏱️ Mở kết nối Serial
+try:
+    ser = serial.Serial(PORT, BAUD, timeout=1)
+    time.sleep(2)  # Chờ Arduino khởi động lại
+    print(f"🔌 Đang ghi dữ liệu từ {PORT} vào {FILENAME} ... (nhấn Ctrl + C để dừng)")
+except Exception as e:
+    print(f"❌ Lỗi mở cổng {PORT}: {e}")
+    exit()
 
-print(f"🔌 Đang ghi dữ liệu từ {PORT} vào {FILENAME} ... (nhấn Ctrl + C để dừng)")
-
-# 🚀 Tạo file CSV và bắt đầu ghi
+# 🚀 Mở file CSV để ghi
 with open(FILENAME, mode="w", newline="") as file:
     writer = csv.writer(file)
-    header_written = False
+
+    # 🧠 Header đúng với thứ tự Serial.print bên Arduino
+    header = [
+        "P1",
+        "P2",
+        "deltaT12",
+        "deltaT_up",
+        "SI",
+        "RI",
+        "AI",
+        "AC_DC",
+        "HR",
+        "Glucose"
+    ]
+    writer.writerow(header)
 
     try:
         while True:
-            line = ser.readline().decode("utf-8").strip()
-            if not line:
-                continue
+            try:
+                line = ser.readline().decode("utf-8").strip()
+                if not line:
+                    continue
 
-            # In ra màn hình để theo dõi
-            print(line)
+                # Bỏ qua các dòng không hợp lệ hoặc dòng tiêu đề từ Arduino
+                if "AC_scaled" in line or "P1" in line:
+                    continue
 
-            # Nếu là dòng tiêu đề thì ghi header
-            if not header_written and "AC_scaled" in line:
-                writer.writerow(line.split(","))
-                header_written = True
-                continue
+                # Cắt dữ liệu theo dấu phẩy
+                values = line.split(",")
+                if len(values) < len(header) - 1:
+                    print("⚠️ Bỏ qua dòng không hợp lệ:", line)
+                    continue
 
-            # Ghi dữ liệu
-            if header_written:
-                writer.writerow(line.split(","))
+                # Thêm timestamp (thời gian thật của máy tính)
+                writer.writerow(values)
+                file.flush()  # Lưu ngay để tránh mất dữ liệu
+
+                # In ra màn hình để theo dõi nhanh
+                print("✅", values)
+
+            except UnicodeDecodeError:
+                continue  # Bỏ qua lỗi ký tự lạ
 
     except KeyboardInterrupt:
         print("\n🛑 Dừng ghi dữ liệu.")
         ser.close()
+        

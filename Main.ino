@@ -24,7 +24,7 @@ float lastP1 = 0, lastP2 = 0;
 unsigned long tP1 = 0, tP2 = 0, tLastP1 = 0, tFoot = 0;
 float RR = 1000;  // ms
 float HR = 0, RI = 0, SI = 0, AI = 0, deltaT12 = 0, deltaT_up = 0;
-float DC = 0;     // giá trị trung bình DC giả định
+float DC = 0;     // giá trị trung bình DC
 float Glucose = 0; // giả lập (có thể thêm từ dữ liệu sau)
 
 //// --------- Biến phát hiện chân sóng ---------
@@ -103,7 +103,6 @@ void setup() {
     while (1);
   }
   particleSensor.setup();
-  Serial.println("AC_scaled,DC,P1,P2,deltaT12,SI,RI,AI,HR,deltaT_up,Glucose");
 }
 
 //// --------- Loop ---------
@@ -153,26 +152,28 @@ void loop() {
       lastP2 = P2;
       tP2 = now;
 
-      // --- Tính các chỉ số ---
+      // --- Tính các chỉ số chuẩn ---
       deltaT12 = (float)(tP2 - tP1);
       deltaT_up = (tP1 > tFoot) ? (float)(tP1 - tFoot) : 0;
 
-      SI = lastP1 / deltaT12;       // Stiffness Index
-      RI = lastP2 / lastP1;         // Reflection Index
-      AI = RI * 100.0;              // Augmentation Index %
-      Glucose = 0;                  // chưa có dữ liệu thực tế
+      const float height_cm = 170.0;              // chiều cao người đo
+      SI = height_cm / (deltaT12 / 1000.0);       // Stiffness Index (m/s)
+      RI = (lastP2 / lastP1) * 100.0;             // Reflection Index (%)
+      AI = ((lastP2 - lastP1) / lastP1) * 100.0;  // Augmentation Index (%)
+      float AC_DC = (DC > 0) ? (fabs(AC_scaled) / DC) : 0; // AC/DC ratio
+
+      Glucose = 0;  // chưa có dữ liệu thực tế
 
       // --- In ra CSV (để train TinyML) ---
-      Serial.print(AC_scaled); Serial.print(",");
-      Serial.print(DC); Serial.print(",");
       Serial.print(lastP1); Serial.print(",");
       Serial.print(lastP2); Serial.print(",");
       Serial.print(deltaT12); Serial.print(",");
+      Serial.print(deltaT_up); Serial.print(",");
       Serial.print(SI); Serial.print(",");
       Serial.print(RI); Serial.print(",");
       Serial.print(AI); Serial.print(",");
+      Serial.print(AC_DC); Serial.print(",");
       Serial.print(HR); Serial.print(",");
-      Serial.print(deltaT_up); Serial.print(",");
       Serial.println(Glucose);
     }
   }
