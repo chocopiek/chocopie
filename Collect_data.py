@@ -23,10 +23,7 @@ with open(FILENAME, mode="w", newline="") as file:
 
     # 🧠 Header đúng với thứ tự Serial.print bên Arduino
     header = [
-        "P1",
-        "P2",
         "deltaT12",
-        "deltaT_up",
         "SI",
         "RI",
         "AI",
